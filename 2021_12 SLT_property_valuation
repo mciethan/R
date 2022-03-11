@@ -1,0 +1,258 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+```
+
+# Predicting Property Values in South Lake Tahoe, CA
+### AJ Murphy and Ethan McIntosh - CSCI 0100 Final Project - Fall 2021 
+
+## Introduction
+#### Home sales and property values are often studied using a "hedonic model" - i.e. thinking of the total property value of a home as the product of a vector of various attributes. 
+#### In this general vein, we decided to use regression to evaluate various factors as possible predictors of property values in the small resort city of South Lake Tahoe, CA, 
+#### for which parcel data is publicly available on the Tahoe Open Data website (https://data-trpa.opendata.arcgis.com/).   
+
+``` {r import, echo = FALSE}
+# blank values already removed
+p <- read.csv(file_path_redacted, stringsAsFactors = TRUE)
+```
+
+## Data Cleaning and Exploratory Data Analysis
+#### First, we need to clean up the data, selecting the columns of the original dataset we're interested in analyzing, building the total property value column, 
+#### and checking for 0's, blanks, or implausible values in important fields.  Then, we'll get a basic idea of the shape of the data using summary statistics as well as 
+#### a histogram of property values.  Hypothesis: we expect property values to be skewed to the right.
+
+``` {r datacleaning}
+parcels <- select(p, "USECDPRICL", "USECDPRILI", "STRUCVAL", "LANDVAL", "YR_BUILT", "IMPR_SQ_FT", "NEAR_WTR", "FID_SLT_Neighborhoods")
+
+
+# validate there aren't blank or 0 values in strucval and landval
+count(parcels, (parcels$STRUCVAL == 0) | is.null(parcels$STRUCVAL))
+count(parcels, (parcels$LANDVAL == 0) | is.null(parcels$LANDVAL))
+
+# filter out any parcels with a year built earlier than 1500 (likely typos)
+parcels <- filter(parcels, YR_BUILT >= 1500)
+
+
+# build column for total property value
+parcels$TOTVAL <- parcels$STRUCVAL + parcels$LANDVAL
+res_parcels <- parcels %>% filter(USECDPRICL == "RES")
+
+max(parcels$TOTVAL)
+min(parcels$TOTVAL)
+mean(parcels$TOTVAL)
+median(parcels$TOTVAL)
+ggplot(data = parcels, aes(x = TOTVAL)) + geom_histogram(binwidth = 100000)
+```
+
+#### As expected, property values have a long right tail, with a median of $218,472 and a maximum of $23,757,998.  We decided to add a column to the table with 
+#### log-transformed property values, since the shape of that distribution looks much more normal. 
+
+``` {r}
+parcels$log_TOTVAL <- (log(parcels$TOTVAL))
+res_parcels$log_TOTVAL <- (log(res_parcels$TOTVAL))
+ggplot(data = parcels, aes(x = log_TOTVAL)) + geom_histogram(bins = 50)
+```
+
+#### Finally, we want to examine our data in terms of building type categories.  The categories in this dataset include residential, commercial, industrial, 
+#### manufacturing, and miscellaneous building categories, with various subcategories within each.  We want to see how similar their property value distributions are 
+#### before we proceed.  Our hypothesis is that residential property values will look like a different distribution than commercial property values.
+
+``` {r boxplots}
+count(parcels, parcels$USECDPRICL != "RES")
+
+ggplot(data = parcels, aes(x = USECDPRICL, y = log_TOTVAL)) + geom_boxplot()
+```
+
+#### Except for manufacturing, the other building types do have a visibly higher range of property values than residential buildings.  Non-residential building types 
+#### only make up about 10% of this dataset, and we imagine that commercial property markets operate differently with regards to things like distance from the waterfront 
+#### compared to residential property markets.  Therefore, we made a filtered table with just residential buildings (res_parcels) for the main portion of our analysis.
+
+## Finding Best-Fitting Models for each Independent Variable
+
+#### For our analysis, We are considering three independent variables: square footage, year built, and distance from the waterfront.  As a starting point, we want to test 
+#### how correlated various fields in this dataset are with property values.  we hypothesize that square footage will be the most correlated with property values, 
+#### followed by year built, then by proximity to the waterfront.  Additionally, we hypothesize that the shape of the relationship will be linear for square footage vs 
+#### some kind of exponential decay for year built and waterfront distance.
+
+``` {r corr}
+cor(res_parcels$TOTVAL, res_parcels$IMPR_SQ_FT)
+cor(res_parcels$TOTVAL, res_parcels$YR_BUILT)
+cor(res_parcels$TOTVAL, res_parcels$NEAR_WTR)
+cor(res_parcels$log_TOTVAL, res_parcels$IMPR_SQ_FT)
+cor(res_parcels$log_TOTVAL, res_parcels$YR_BUILT)
+cor(res_parcels$log_TOTVAL, res_parcels$NEAR_WTR)
+
+pairs(res_parcels %>% select(IMPR_SQ_FT, YR_BUILT, NEAR_WTR, TOTVAL, log_TOTVAL))
+```
+
+#### The relative magnitudes of the correlation coefficients suggest that our hypothesis about the order of importance of square footage, year built, and distance to 
+#### the waterfront was correct.  Furthermore, comparing the results in the transformed spaces vs non-transformed spaces, we see that the correlation coefficient didn't change much 
+#### for square footage in the transformed space, and the point cloud in normal space looks pretty linear, confirming our original hypothesis that square footage would have a more 
+#### or less linear relationship with property values.  For year built, the correlation coefficient was significantly higher when we plotted it against the log of property values, 
+#### and that point cloud looks more linear than the one in normal space.  This confirms our hypothesis about year_built having more a curved (exponential or logarithmic) 
+#### relationship with property values.  For distance to the waterfront, neither point cloud looks very linear (in particular, there is curve sharply upward at lower distances 
+#### from the water, even in transformed space), so we have more work to do.
+
+#### We wanted to see if we could model the relationship between distance to water and total property value via the use of lambda testing
+
+``` {r lamda testing}
+plot((res_parcels$NEAR_WTR),log(res_parcels$TOTVAL))
+
+lamda <- c(-1,-.75,.5,-.25,.25,.5,.75,1)
+lamda_plot <- function (lamda) {
+  r2 <- numeric(0)
+  for (i in lamda) {
+  NEAR_WTR_lamda <- (res_parcels$TOTVAL^i)
+lamda_model <- lm(NEAR_WTR_lamda~ res_parcels$NEAR_WTR)
+r2 <- append(r2,summary(lamda_model)$r.squared)
+}
+print(r2)
+plot(lamda,r2)
+}
+lamda_plot(lamda)
+plot(res_parcels$TOTVAL^0.7 ~ res_parcels$NEAR_WTR)
+```
+
+#### After doing a series of lambdas and checking their r squared values, we find the best linear model based on the r squared value is likely to be around lambda = 0.7.  
+#### However, plotting this transformed space still yields a relatively non-linear looking point cloud.  We speculate that this may be because the function is in fact not logarithic 
+#### or exponetial, disconfirming our original hypothesis about this variable. Perhaps this is the case because the relationship between waterfront distance and property values 
+#### is actually multiple distributions on top of each other.  One possible way to determine this is by looking at this relationship on a smaller (neighborhood) scale.  
+
+![Neighborhoods Map](images/Neighborhoods.png)
+
+
+
+#### This map was created in ArcGIS Pro based on this parcel dataset, with darker purple polygons representing parcels with higher property values per square foot, and the orange 
+#### boundary lines delineating neighborhoods of South Lake Tahoe, numbered 1-8.  Visually, one can notice steeper gradients of purple in neighborhoods closer to the waterfront.  
+#### The neighborhood values are stored in res_parcels under the FID_SLT_Neighborhoods column.  We tried doing neighborhood-level analyses for neighborhoods 1, 5, and 6, located 
+#### along the waterfront, as well as all other neighborhoods.  
+
+``` {r neighborhoods}
+n1 <- res_parcels %>% filter(FID_SLT_Neighborhoods == 1)
+n5 <- res_parcels %>% filter(FID_SLT_Neighborhoods == 5)
+n6 <- res_parcels %>% filter(FID_SLT_Neighborhoods == 6)
+all_others <- res_parcels %>% filter(FID_SLT_Neighborhoods %in% c(2,3,4,7,8))
+
+cor(n1$log_TOTVAL, n1$NEAR_WTR)
+cor(n5$log_TOTVAL, n5$NEAR_WTR)
+cor(n6$log_TOTVAL, n6$NEAR_WTR)
+cor(all_others$log_TOTVAL, all_others$NEAR_WTR)
+
+plot(n1$log_TOTVAL ~ n1$NEAR_WTR)
+plot(n5$log_TOTVAL ~ n5$NEAR_WTR)
+plot(n6$log_TOTVAL ~ n6$NEAR_WTR)
+plot(all_others$log_TOTVAL ~ all_others$NEAR_WTR)
+```
+
+#### The correlation coefficients were much stronger for neighborhoods 1 and 6 than for neighborhood 5 or for the non-waterfront neighborhoods.  Furthermore, the neighborhood 
+#### specific point clouds look much more linear than the point cloud for the whole dataset.  To model the waterfront proximity variable going forward, we will use these 
+#### smaller-scale distributions.  Our original hypothesis was that waterfront proximity might be a single logarithmic decay type model, so this neighborhood level analysis 
+#### helped us refine that.
+
+## Running and Evaluating the Models
+
+#### Now that we have and idea of which spaces are likely to produce the best fitting models for square footage, year built, and waterfront proximity, we went ahead and 
+#### created linear models for each variable.  To plot these models, we used a filtered version of the table (property value < $10,000,000) to have graphs with better visibility 
+#### of the main bulk of the point cloud in relation to the models.  These values were still part of the models, just not graphed.
+```{r linear modeling}
+## Since we hypothesized that total value and square feet resulted in a linear relationship, we decided to do a linear model of both of them.
+lm_Sq_Ft <- lm(res_parcels$TOTVAL ~ res_parcels$IMPR_SQ_FT)
+summary(lm_Sq_Ft)
+
+## Since we hypothesized that total value and year built would result in a curved model, so we decided to do the log of Total value by the year built.
+lm_Yr_Built <- lm(log(res_parcels$TOTVAL) ~ res_parcels$YR_BUILT)
+summary(lm_Yr_Built)
+
+## Since we found that the relationship between total value and NEAR_WTR might be best understood by breaking it into multiple distributions, we did linear models for different 
+## neighborhood groups with the log of total value on the y.
+lm_all_parcels <- lm(res_parcels$log_TOTVAL ~ res_parcels$NEAR_WTR)
+lm_n1 <- lm(n1$log_TOTVAL ~ n1$NEAR_WTR)
+lm_n5 <- lm(n5$log_TOTVAL ~ n5$NEAR_WTR)
+lm_n6 <- lm(n6$log_TOTVAL ~ n6$NEAR_WTR)
+lm_others <- lm(all_others$log_TOTVAL ~ all_others$NEAR_WTR)
+
+summary(lm_all_parcels)
+summary(lm_n1)
+summary(lm_n5)
+summary(lm_n6)
+summary(lm_others)
+```
+
+#### We found that the r.squared value for the linear model of TOTVAL and IMPR_SQ_FT is equal to .388 and the p-value equal to 2.2 * 10^-16. We found that the r.squared value 
+#### for the linear model of log(TOTVAL) and YR_BUILT is equal to .2137 and the p-value equal to 2.2 * 10^-16.  For our linear models of log(TOTVAL) vs NEAR_WTR, we found an 
+#### r squared of 0.12 for neighborhood 6, 0.06 for neighborhood 1, and near 0 for neighborhood 5 as well as the rest of the neighborhoods, with a high degree of significance.
+#### The fact that square footage had a bigger r squared than year built, which had a bigger r squared than any of the neighborhoods did for waterfront distance, confirms our 
+#### original hypothesis about the relative strength of these three variables.
+
+#### An important thing to note is that while we treated these variables as independent to evaluate their relative strengths, in real life, they are not completely independent 
+#### variables.  For example, we found that year built is actually somewhat correlated with square footage.  The other variables are also slightly correlated with each other, 
+#### but less so.  
+
+``` {r dependence}
+cor(res_parcels$IMPR_SQ_FT, res_parcels$YR_BUILT)
+cor(res_parcels$IMPR_SQ_FT, res_parcels$NEAR_WTR)
+cor(res_parcels$YR_BUILT, res_parcels$NEAR_WTR)
+```
+
+#### We hypothesize that this correlation between year built and square footage may have to do with newer buildings being bigger on average.  We're not sure what the sources of 
+#### correlation between the other variables are, but all this means is that these r squared numbers should not be interpreted as meaning that 39% of property value comes from 
+#### square footage, 21% from year built, etc.  Instead, we are just using them to roughly evaluate how strong each variable is compared to the others
+
+#### To more rigorously evaluate how well these models did, we first decided to plot them over our original scatterplots.  
+
+``` {r modelplots}
+
+plot_curve <- function(x, y, a, b) {
+  plot(x, y)
+  curve(exp(a + b * x), col = "red", add = TRUE)
+}
+
+res_parcels_f <- res_parcels %>% filter(TOTVAL < 10000000)
+n6_f <- n6 %>% filter(TOTVAL < 10000000)
+
+## Plotting the linear model of total property value vs square feet
+plot(res_parcels_f$TOTVAL ~ res_parcels_f$IMPR_SQ_FT) 
+abline(lm_Sq_Ft, col="red")
+
+# Plotting the exponential model of total property value vs. year built
+plot_curve(res_parcels_f$YR_BUILT, res_parcels_f$TOTVAL, lm_Yr_Built$coefficients[1], lm_Yr_Built$coefficients[2])
+
+# plotting the models for each neighborhood
+plot_curve(n1$NEAR_WTR, n1$TOTVAL, lm_n1$coefficients[1], lm_n1$coefficients[2])
+plot_curve(n5$NEAR_WTR, n5$TOTVAL, lm_n5$coefficients[1], lm_n5$coefficients[2])
+plot_curve(n6_f$NEAR_WTR, n6_f$TOTVAL, lm_n6$coefficients[1], lm_n6$coefficients[2])
+plot_curve(all_others$NEAR_WTR, all_others$TOTVAL, lm_others$coefficients[1], lm_others$coefficients[2])
+```
+
+#### Visually, the models for square footage and year built look like good fits.  The models for waterfront distance look okay for most of the distribution, but with some set of 
+#### outliers on the high end near the waterfront.  Specifically, we noticed that in each of the waterfront neighborhoods (1, 5, and 6). the range of property values very close 
+#### to the waterfront is much wider than in the rest of the distribution.  However, in neighborhood 5, the upper property values only go up to around $1,000,000, while they go 
+#### much higher for neighborhoods 1 and 6.  
+
+``` {r residuals}
+plot(lm_Sq_Ft, which = 1)
+plot(lm_Yr_Built, which = 1)
+plot(lm_n1, which = 1)
+plot(lm_n5, which = 1)
+plot(lm_n6, which = 1)
+plot(lm_others, which = 1)
+```
+
+#### If we were to discount outliers, most of these residual plots seem fairly cloudlike.  The residuals for neighborhood 6 have more of a structure, so results for this 
+#### neighborhood should be taken with more of a grain of salt.  Neighborhood 6 has the fewest data points, so it makes sense that the model wouldn't account for as much of the 
+#### hyperlocal variation present on that smaller scale.
+
+## Conclusion
+
+#### These regression models confirm most of our original hypotheses.  We found that of the three variables we considered, that square footage was the strongest predictor of 
+#### property values in South Lake Tahoe, and could be modeled linearly in untransformed space.  We also confirmed that year built was the second strongest predictor of 
+#### property values, and that its best fitting model was more of a curve.  For waterfront distance, we had originally predicted a curved relationship as well, 
+#### but found after log transformation and lambda testing that in fact, this variable was best considered on a more local scale than the entire dataset.
+
+#### We were curious as to why some waterfront neighborhoods (1, 6) had a stronger relationship between coast proximity and property values than others (5).  After doing some 
+#### internet digging, we found that the two neighborhoods with relatively high r squared values happen to be waterfront neighborhoods with private beaches, which could be one 
+#### explanation for these local differences, or could just be an interesting coincidence.  The below map shows the r squared values for each area in boxes, along with screenshots 
+#### from property development websites showing the public vs private nature of beaches in those areas. 
+
+![Neighborhoods Map](images/Beaches.png)
