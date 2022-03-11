@@ -31,7 +31,7 @@ count(parcels, (parcels$STRUCVAL == 0) | is.null(parcels$STRUCVAL))
 count(parcels, (parcels$LANDVAL == 0) | is.null(parcels$LANDVAL))
 
 # filter out any parcels with a year built earlier than 1500 (likely typos)
-parcels <- filter(parcels, YR_BUILT >= 1500)
+parcels <- filter(parcels, YR_BUILT >= 1500) 
 
 
 # build column for total property value
