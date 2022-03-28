@@ -1,4 +1,4 @@
-SLT_property_valuation is an R Markdown file that I worked on with a partner for a statistics/data science class at Brown.  See the link below to the knit PDF version of this file, which may be easier to read:
+SLT_property_valuation is an R Markdown file that I worked on with a partner for an introductory statistics/data science class at Brown.  See the link below to the knit PDF version of this file, which may be easier to read:
 
 https://drive.google.com/file/d/17QhDq9eI_Td2DTril8CF_S35WWpGYjXZ/view?usp=sharing 
 
