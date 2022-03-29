@@ -13,7 +13,7 @@ library(ggplot2)
 
 ``` {r import, echo = FALSE}
 # blank values already removed
-p <- read.csv("C://Users/emacl/Desktop/neighborhood_parcels.csv", stringsAsFactors = TRUE)
+p <- read.csv(FILEPATH_REDACTED, stringsAsFactors = TRUE)
 ```
 
 ## Data Cleaning and Exploratory Data Analysis
